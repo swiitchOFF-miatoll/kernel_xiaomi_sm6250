@@ -1,0 +1,7 @@
+# ignore stuff
+modules/vendor/lib/modules/modules.{alias,dep,softdep,load}
+modules/vendor/lib/modules/*.ko
+*dtb*
+dtbo.img
+Image
+*.zip*
