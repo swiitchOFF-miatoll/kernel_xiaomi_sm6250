@@ -4,11 +4,11 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=RedCherry+ Kernel
-kernel.compiler=clang-r530567
-kernel.made=Arindam Bhattacharjee
-kernel.version=4.14.336
-message.word=Thank you for installing RedCherry+ Kernel
+kernel.string=x
+kernel.compiler=x
+kernel.made=x
+kernel.version=x
+message.word=x
 do.devicecheck=1
 do.modules=0
 do.systemless=1
