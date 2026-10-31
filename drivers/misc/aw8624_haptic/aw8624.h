@@ -22,6 +22,7 @@
 #include <linux/cdev.h>
 #include <linux/leds.h>
 #include <linux/atomic.h>
+#include <linux/timed_output.h>
 
 /*********************************************************
  *
@@ -313,6 +314,7 @@ struct aw8624 {
 	struct work_struct rtp_work;
 	struct delayed_work ram_work;
 	struct delayed_work stop_work;
+    struct timed_output_dev timed_output;
 
 	struct fileops fileops;
 	struct ram ram;

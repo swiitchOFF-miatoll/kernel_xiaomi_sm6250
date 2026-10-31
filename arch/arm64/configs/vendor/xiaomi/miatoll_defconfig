@@ -5890,3 +5890,33 @@ CONFIG_SBITMAP=y
 #
 CONFIG_RMNET_PERF=m
 CONFIG_RMNET_SHS=m
+
+#
+# Root + stealth stack (see docs/root-integration.md)
+#   KernelSU-Next (legacy + SUSFS line) / SuSFS v2.3.0 NON-GKI / NoMount v2.0.0
+#
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set
+#   The SuSFS v2.3.0-for-4.14 port ships no susfs_try_umount()/susfs_add_try_umount()
+#   (only the deprecated CMD_SUSFS_ADD_TRY_UMOUNT id is left in susfs_def.h), so with
+#   this symbol enabled the KernelSU-Next fork would call missing functions:
+#     drivers/kernelsu/supercall/supercall.c:158  susfs_add_try_umount(arg)
+#     drivers/kernelsu/hook/setuid_hook.c:180     susfs_try_umount(new_uid)
+#   Keeping it off selects the fork's own zygote umount path instead
+#   (drivers/kernelsu/feature/kernel_umount.c: ksu_handle_umount() + the mount_list
+#   managed through KSU_UMOUNT_ADD/DEL/GETSIZE supercalls), which is the working
+#   try_umount on this tree. Re-enable only if the SuSFS side grows susfs_try_umount().
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_SUS_MAP=y
+# CONFIG_KSU_SUSFS_SUS_MEMFD is not set
+CONFIG_NOMOUNT=y
+CONFIG_KALLSYMS_ALL=y

@@ -1,0 +1,65 @@
+{
+  "kernel": "4.14.357-openela (non-GKI, arm64, xiaomi miatoll / sm6250)",
+  "components": {
+    "kernelsu_next": {
+      "repository": "https://github.com/sidex15/KernelSU-Next",
+      "branch": "legacy-susfs-v2",
+      "commit_short": "d999a2aff115",
+      "commit_date": "2026-09-22",
+      "version_code": 30000,
+      "local_path": "KernelSU-Next/",
+      "kernel_dir_symlink": "drivers/kernelsu -> ../KernelSU-Next/kernel",
+      "why_this_fork": "KernelSU-Next upstream has no SUSFS support and no legacy 4.14 manual-hook work; this 'legacy-susfs-v2' branch is the KernelSU-Next derivative with in-tree SuSFS v2 support (CONFIG_KSU_SUSFS_*), the CONFIG_KSU_MANUAL_HOOK call-site API for 4.14, and CONFIG_KSU_KPROBES_HOOK so it builds without kprobes/CONFIG_KALLSYMS hooking.",
+      "local_modifications": "none; Kbuild's generated-headers check (the hook audit) satisfied by apply_ksu_hooks.py",
+      "commit_ref": "branch legacy-susfs-v2 @ d999a2aff115"
+    },
+    "susfs": {
+      "version": "2.3.0",
+      "variant": "NON-GKI",
+      "patch_file": "tools/root-integration/patches/susfs/susfs_patch_to_4.14.patch",
+      "patch_source": "https://github.com/JackA1ltman/NonGKI_Kernel_Build_2nd -> Patches/Patch/susfs_patch_to_4.14.patch",
+      "why_this_patch": "simonpunk/susfs4ksu officially stops at v1.5.1; v2.3.0 legacy support for 4.14 comes from this community port, which is what the non-GKI guides (and the reference kernels in this family) apply.",
+      "apply_command": "patch -p1 --fuzz=3 < tools/root-integration/patches/susfs/susfs_patch_to_4.14.patch",
+      "userspace_requirement": "ksu_susfs v2.x helper (susfs4ksu module >= 2.3.0). v1.5.x 'susfs4ksu.sh' is incompatible: add_open_redirect() gained a third <UID_SCHEME> argument."
+    },
+    "nomount": {
+      "repository": "https://github.com/maxsteeel/nomount",
+      "tag": "v2.0.0",
+      "tag_object": "b8d268353b4e7ecc53c67d1816a626b7d6579201",
+      "local_path": "fs/nomount/",
+      "integration": "kernel/README.md 'Option A: build-in', kernel/src/* copied verbatim",
+      "why_builtin": "legacy kernels (<5.10) cannot load the release's prebuilt LKMs",
+      "userspace_requirement": "NoMount metamodule (nm CLI over the kernel keyring, add_key(2) based; no ioctl device node)",
+      "local_modifications": "none"
+    },
+    "ebpf": {
+      "requirement": "5.10-level eBPF backport present; add patches only if missing",
+      "verdict": "requirement already met - no eBPF changes made",
+      "audit_date": "2026-09-24",
+      "present": [
+        "kernel/bpf: btf.c core.c verifier.c syscall.c dispatcher.c trampoline.c bpf_struct_ops.c bpf_lsm.c ringbuf.c bpf_iter.c task_iter.c prog_iter.c map_iter.c bpf_local_storage.c bpf_inode_storage.c local_storage.c preload.c offload.c sysfs_btf.c disasm.c",
+        "uapi: BPF_PROG_TYPE_{LSM,STRUCT_OPS,EXT}, BPF_MAP_TYPE_{RINGBUF,STRUCT_OPS,INODE_STORAGE}, BPF_TRACE_ITER, bpf_spin_lock",
+        "tools/lib/bpf (libbpf) + samples/bpf present"
+      ],
+      "absent": [
+        "bpf_for_each_map_elem (5.11)",
+        "bpf_timer/bpf_snprintf (5.15)",
+        "bpf_loop (5.17)",
+        "bpf_copy_from_user_task (5.11)",
+        "BPF_MAP_TYPE_TASK_STORAGE (5.18)",
+        "BPF_PROG_TYPE_SYSCALL",
+        "BPF_TOKEN",
+        "BPF_MAP_TYPE_{ARENA,BLOOM_FILTER,USER_RINGBUF,CGRP_STORAGE}"
+      ],
+      "local_modifications": "none",
+      "reason_for_no_changes": "Absent features are all post-5.10; backporting them onto the 4.14 bpf_prog/btf/trampoline layout is a large risky surgery unrelated to the root stack. See docs/root-integration.md#ebpf."
+    }
+  },
+  "toolchain": {
+    "compiler": "clang 18.1.8 (LLVM), LLVM_IAS=1, ld.lld, llvm-ar/nm/objcopy/objdump/readelf/strip/size",
+    "gcc": "not used for the kernel; no GNU cross binutils installed by CI",
+    "workflow": ".github/workflows/kernel-build.yml"
+  },
+  "recorded": "2026-09-24",
+  "note": "commit fields record the pinned upstream revision this tree was vendored from; the vendored copy is committed in-tree so the build is reproducible without network access."
+}

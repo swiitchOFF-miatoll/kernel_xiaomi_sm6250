@@ -1,0 +1,78 @@
+diff --git a/drivers/misc/aw8624_haptic/aw8624.c b/drivers/misc/aw8624_haptic/aw8624.c
+--- a/drivers/misc/aw8624_haptic/aw8624.c
++++ b/drivers/misc/aw8624_haptic/aw8624.c
+@@
+ #include <linux/miscdevice.h>
+ #include <linux/platform_device.h>
+ #include <asm/uaccess.h>
+ #include <linux/syscalls.h>
+ #include <linux/power_supply.h>
+ #include <linux/pm_qos.h>
++#include "../../staging/android/timed_output.h"
+ #include "aw8624_reg.h"
+ #include "aw8624.h"
++
++static int aw8624_timed_output_get_time(struct timed_output_dev *sdev)
++{
++	struct aw8624 *aw8624 = container_of(sdev, struct aw8624, timed_output);
++
++	if (hrtimer_active(&aw8624->timer))
++		return ktime_to_ms(hrtimer_get_remaining(&aw8624->timer));
++
++	return aw8624->state ? aw8624->duration : 0;
++}
++
++static void aw8624_timed_output_enable(struct timed_output_dev *sdev,
++						   int timeout)
++{
++	struct aw8624 *aw8624 = container_of(sdev, struct aw8624, timed_output);
++
++	mutex_lock(&aw8624->lock);
++	aw8624->duration = timeout;
++
++	if (timeout > 0) {
++		aw8624->state = 1;
++		aw8624_haptic_start(aw8624);
++	} else {
++		aw8624->state = 0;
++		aw8624_haptic_stop(aw8624);
++	}
++
++	mutex_unlock(&aw8624->lock);
++}
+@@
+ static int aw8624_vibrator_init(struct aw8624 *aw8624)
+ {
++	int ret;
++
+ 	pr_debug("%s enter\n", __func__);
+ 
+ 	hrtimer_init(&aw8624->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+ 	aw8624->timer.function = aw8624_vibrator_timer_func;
+ 	INIT_WORK(&aw8624->vibrator_work, aw8624_vibrator_work_routine);
+ 	INIT_WORK(&aw8624->rtp_work, aw8624_rtp_work_routine);
++
++	aw8624->timed_output.name = "vibrator";
++	aw8624->timed_output.enable = aw8624_timed_output_enable;
++	aw8624->timed_output.get_time = aw8624_timed_output_get_time;
++	ret = timed_output_dev_register(&aw8624->timed_output);
++	if (ret < 0) {
++		dev_err(aw8624->dev, "timed_output registration failed: %d\n",
++			ret);
++		return ret;
++	}
+ 
+ 	mutex_init(&aw8624->lock);
+ 	atomic_set(&aw8624->is_in_rtp_loop, 0);
+ 	atomic_set(&aw8624->exit_in_rtp_loop, 0);
+@@
+ static int aw8624_i2c_remove(struct i2c_client *i2c)
+ {
+ 	struct aw8624 *aw8624 = i2c_get_clientdata(i2c);
+ 
++	timed_output_dev_unregister(&aw8624->timed_output);
+ 	aw8624_haptic_stop(aw8624);
+ 	kfree(aw8624);
+ 	return 0;
+ }
+*** End Patch

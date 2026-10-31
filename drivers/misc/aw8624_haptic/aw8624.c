@@ -3954,6 +3954,34 @@ static struct attribute_group aw8624_vibrator_attribute_group = {
  * i2c driver
  *
  ******************************************************/
+static int aw8624_timed_output_get_time(struct timed_output_dev *sdev)
+{
+	struct aw8624 *aw8624 = container_of(sdev, struct aw8624, timed_output);
+
+	if (hrtimer_active(&aw8624->timer))
+		return ktime_to_ms(hrtimer_get_remaining(&aw8624->timer));
+
+	return aw8624->state ? aw8624->duration : 0;
+}
+
+static void aw8624_timed_output_enable(struct timed_output_dev *sdev, int timeout)
+{
+	struct aw8624 *aw8624 = container_of(sdev, struct aw8624, timed_output);
+
+	mutex_lock(&aw8624->lock);
+	aw8624->duration = timeout;
+
+	if (timeout > 0) {
+		aw8624->state = 1;
+		aw8624_haptic_start(aw8624);
+	} else {
+		aw8624->state = 0;
+		aw8624_haptic_stop(aw8624);
+	}
+
+	mutex_unlock(&aw8624->lock);
+}
+
 static int
 aw8624_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 {
