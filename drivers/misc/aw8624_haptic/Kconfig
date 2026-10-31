@@ -1,12 +1,24 @@
 config AW8624_HAPTIC
 	tristate "Awinic AW8624 haptic driver"
 	depends on I2C
+	select ANDROID_TIMED_OUTPUT
+	select NEW_LEDS
+	select LEDS_CLASS
 	help
 	  Say Y here if you have Awinic AW8624 haptic controller
 	  chip in your system.
 
+	  The driver registers the haptic as
+
+	    * an Android timed_output device
+	      (/sys/class/timed_output/vibrator/enable),
+
+	    * the LED "vibrator" class device the Android vibrator HAL
+	      drives (/sys/class/leds/vibrator/{duration,activate,state}),
+
+	    * and a force-feedback input device (FF_RUMBLE/FF_PERIODIC).
+
 	  If unsure, say N.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called mpr121_touchkey.
-
+	  module will be called aw8624.

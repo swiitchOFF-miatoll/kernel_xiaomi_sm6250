@@ -2199,6 +2199,255 @@ static int aw8624_vibrator_init(struct aw8624 *aw8624)
 	return 0;
 }
 
+/*****************************************************
+ *
+ * Android vibrator integration
+ *
+ * The AW8624 is the only haptic actuator on this board, so it has to
+ * publish the interfaces the Android vibrator HAL looks for.  Registering
+ * a plain force-feedback input device is not enough: the Vibrator /
+ * VibratorManager framework talks to the HAL, and the HAL only pokes at
+ * these two class interfaces, so without them every vibrate() call from
+ * an app is silently dropped.
+ *
+ *   1. timed_output class (legacy HAL / hardware/libhardware_legacy):
+ *        /sys/class/timed_output/vibrator/enable
+ *        write "<ms>" to buzz, write "0" to stop, read = ms remaining
+ *
+ *   2. LED "vibrator" class (AOSP + QTI vibrator HAL):
+ *        /sys/class/leds/vibrator/duration   ms to run for
+ *        /sys/class/leds/vibrator/activate   1 = start, 0 = stop
+ *        /sys/class/leds/vibrator/state      1 while running
+ *        /sys/class/leds/vibrator/brightness 0 = off, >0 = on
+ *
+ * The force-feedback input device (/dev/input/eventX) is kept as well so
+ * that ffmemless clients (fftest and friends) keep working.
+ *
+ *****************************************************/
+
+/* used when a HAL/user only says "on" without giving a duration */
+#define AW8624_VIBRATOR_DEFAULT_DURATION_MS		1000
+
+static int aw8624_vibrator_set(struct aw8624 *aw8624, int timeout_ms)
+{
+	if (timeout_ms > HAPTIC_MAX_TIMEOUT)
+		timeout_ms = HAPTIC_MAX_TIMEOUT;
+
+	mutex_lock(&aw8624->lock);
+	hrtimer_cancel(&aw8624->timer);
+
+	if (timeout_ms > 0) {
+		aw8624->duration = timeout_ms;
+		aw8624->state = 1;
+		/*
+		 * Both the RAM-loop and the continuous playback mode are cut
+		 * short by the hrtimer that aw8624_vibrator_work_routine()
+		 * arms with ->duration, so honour the mode selected through
+		 * the device tree (vib_mode: 0 = RAM loop, 1 = continuous).
+		 */
+		if (aw8624->info.mode == AW8624_HAPTIC_ACTIVATE_CONT_MODE)
+			aw8624->activate_mode =
+			    AW8624_HAPTIC_ACTIVATE_CONT_MODE;
+		else
+			aw8624->activate_mode =
+			    AW8624_HAPTIC_ACTIVATE_RAM_LOOP_MODE;
+	} else {
+		aw8624->state = 0;
+	}
+	mutex_unlock(&aw8624->lock);
+
+	queue_work(aw8624->work_queue, &aw8624->vibrator_work);
+
+	return 0;
+}
+
+static int aw8624_vibrator_get_time(struct aw8624 *aw8624)
+{
+	if (hrtimer_active(&aw8624->timer))
+		return (int)ktime_to_ms(hrtimer_get_remaining(&aw8624->timer));
+
+	return aw8624->state ? aw8624->duration : 0;
+}
+
+/*****************************************************
+ * 1. timed_output class
+ *****************************************************/
+static int aw8624_timed_output_get_time(struct timed_output_dev *sdev)
+{
+	struct aw8624 *aw8624 = container_of(sdev, struct aw8624, timed_output);
+
+	return aw8624_vibrator_get_time(aw8624);
+}
+
+static void aw8624_timed_output_enable(struct timed_output_dev *sdev,
+				       int timeout)
+{
+	struct aw8624 *aw8624 = container_of(sdev, struct aw8624, timed_output);
+
+	aw8624_vibrator_set(aw8624, timeout);
+}
+
+/*****************************************************
+ * 2. LED "vibrator" class
+ *****************************************************/
+static int aw8624_vib_brightness_set(struct led_classdev *cdev,
+				     enum led_brightness brightness)
+{
+	struct aw8624 *aw8624 = container_of(cdev, struct aw8624, vib_led);
+	int duration = aw8624->duration;
+
+	if (brightness != LED_OFF && duration <= 0)
+		duration = AW8624_VIBRATOR_DEFAULT_DURATION_MS;
+
+	return aw8624_vibrator_set(aw8624,
+				   brightness != LED_OFF ? duration : 0);
+}
+
+static ssize_t aw8624_vib_duration_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	struct aw8624 *aw8624 = container_of(cdev, struct aw8624, vib_led);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", aw8624->duration);
+}
+
+static ssize_t aw8624_vib_duration_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	struct aw8624 *aw8624 = container_of(cdev, struct aw8624, vib_led);
+	int val, rc;
+
+	rc = kstrtoint(buf, 0, &val);
+	if (rc < 0)
+		return rc;
+	if (val < 0)
+		return -EINVAL;
+	if (val > HAPTIC_MAX_TIMEOUT)
+		val = HAPTIC_MAX_TIMEOUT;
+
+	mutex_lock(&aw8624->lock);
+	aw8624->duration = val;
+	mutex_unlock(&aw8624->lock);
+
+	return count;
+}
+
+static ssize_t aw8624_vib_state_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	struct aw8624 *aw8624 = container_of(cdev, struct aw8624, vib_led);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", aw8624->state);
+}
+
+static ssize_t aw8624_vib_state_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	struct aw8624 *aw8624 = container_of(cdev, struct aw8624, vib_led);
+	int val, rc;
+
+	rc = kstrtoint(buf, 0, &val);
+	if (rc < 0)
+		return rc;
+
+	if (val > 0) {
+		int duration = aw8624->duration;
+
+		if (duration <= 0)
+			duration = AW8624_VIBRATOR_DEFAULT_DURATION_MS;
+
+		aw8624_vibrator_set(aw8624, duration);
+	} else {
+		aw8624_vibrator_set(aw8624, 0);
+	}
+
+	return count;
+}
+
+/*
+ * "activate" is what the AOSP vibrator HAL writes, "state" is the alias
+ * some vendor HALs use -- both simply start/stop the motor.  They are
+ * spelled out through __ATTR() instead of DEVICE_ATTR() because the
+ * attributes of the i2c device (aw8624_vibrator_attribute_group below)
+ * already own the dev_attr_duration / dev_attr_activate names.
+ */
+static struct device_attribute dev_attr_vib_duration =
+	__ATTR(duration, 0644, aw8624_vib_duration_show,
+	       aw8624_vib_duration_store);
+
+static struct device_attribute dev_attr_vib_activate =
+	__ATTR(activate, 0644, aw8624_vib_state_show, aw8624_vib_state_store);
+
+static struct device_attribute dev_attr_vib_state =
+	__ATTR(state, 0644, aw8624_vib_state_show, aw8624_vib_state_store);
+
+static struct attribute *aw8624_vib_attributes[] = {
+	&dev_attr_vib_duration.attr,
+	&dev_attr_vib_activate.attr,
+	&dev_attr_vib_state.attr,
+	NULL,
+};
+
+static const struct attribute_group aw8624_vib_attribute_group = {
+	.attrs = aw8624_vib_attributes,
+};
+
+static const struct attribute_group *aw8624_vib_attribute_groups[] = {
+	&aw8624_vib_attribute_group,
+	NULL,
+};
+
+static int aw8624_vibrator_register(struct aw8624 *aw8624)
+{
+	int ret;
+
+	/* legacy timed_output class: /sys/class/timed_output/vibrator/enable */
+	aw8624->timed_output.name = "vibrator";
+	aw8624->timed_output.enable = aw8624_timed_output_enable;
+	aw8624->timed_output.get_time = aw8624_timed_output_get_time;
+	ret = timed_output_dev_register(&aw8624->timed_output);
+	if (ret < 0) {
+		dev_err(aw8624->dev, "%s: timed_output registration failed: %d\n",
+			__func__, ret);
+		return ret;
+	}
+
+	/* Android vibrator HAL: /sys/class/leds/vibrator/ */
+	aw8624->vib_led.name = "vibrator";
+	aw8624->vib_led.max_brightness = LED_FULL;
+	aw8624->vib_led.brightness = LED_OFF;
+	aw8624->vib_led.brightness_set_blocking = aw8624_vib_brightness_set;
+	aw8624->vib_led.groups = aw8624_vib_attribute_groups;
+
+	ret = led_classdev_register(aw8624->dev, &aw8624->vib_led);
+	if (ret < 0) {
+		dev_err(aw8624->dev,
+			"%s: leds/vibrator class registration failed: %d\n",
+			__func__, ret);
+		timed_output_dev_unregister(&aw8624->timed_output);
+		return ret;
+	}
+
+	dev_info(aw8624->dev,
+		 "%s: registered Android vibrator interfaces (leds/vibrator + timed_output/vibrator)\n",
+		 __func__);
+
+	return 0;
+}
+
+static void aw8624_vibrator_unregister(struct aw8624 *aw8624)
+{
+	led_classdev_unregister(&aw8624->vib_led);
+	timed_output_dev_unregister(&aw8624->timed_output);
+}
+
 /******************************************************
  *
  * irq
@@ -4122,6 +4371,15 @@ aw8624_i2c_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 	aw8624_haptic_init(aw8624);
 	aw8624_ram_init(aw8624);
 
+	/* Android vibrator HAL interfaces (timed_output + leds/vibrator) */
+	rc = aw8624_vibrator_register(aw8624);
+	if (rc < 0) {
+		dev_err(aw8624->dev,
+			"%s: failed to register vibrator interfaces: %d\n",
+			__func__, rc);
+		goto destroy_ff;
+	}
+
 	ff = input_dev->ff;
 	ff->upload = aw8624_haptics_upload_effect;
 	ff->playback = aw8624_haptics_playback;
@@ -4175,6 +4433,8 @@ static int aw8624_i2c_remove(struct i2c_client *i2c)
 	struct aw8624 *aw8624 = i2c_get_clientdata(i2c);
 
 	pr_debug("%s enter\n", __func__);
+
+	aw8624_vibrator_unregister(aw8624);
 
 	sysfs_remove_group(&i2c->dev.kobj, &aw8624_vibrator_attribute_group);
 

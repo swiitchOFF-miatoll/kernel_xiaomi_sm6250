@@ -136,3 +136,20 @@ gcc32/
 gcc64/
 out/
 AnyKernel/
+
+# local build artifacts / toolchains (see build.sh)
+/toolchains/
+/out/
+/AK3/
+*.zip
+*.zip.sha256sum
+/tmp/
+
+# GitHub Actions (kept out of the tree by the ".*" rule otherwise)
+!.github/
+!.github/**
+
+# our own provenance patch dir (the "patches" rule above is for
+# downloaded/out-of-tree patch sets people drop in while working)
+!tools/root-integration/patches/
+!tools/root-integration/patches/**

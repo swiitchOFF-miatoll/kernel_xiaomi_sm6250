@@ -69,6 +69,16 @@ extern int sb_prepare_remount_readonly(struct super_block *);
 
 extern void __init mnt_init(void);
 
+/*
+ * KernelSU-Next needs path_umount() (5.9+ API) on this 4.14 tree.  Its Kbuild
+ * injects both the declaration below and the definition in fs/namespace.c with
+ * build-time seds, but those only run when make descends into
+ * drivers/kernelsu -- long after fs/namespace.o was compiled -- so vmlinux
+ * linked without the symbol.  Carry both here instead; the Kbuild greps for
+ * exactly these lines and then skips its own (racy) injection.
+ */
+int path_umount(struct path *path, int flags);
+
 extern int __mnt_want_write(struct vfsmount *);
 extern int __mnt_want_write_file(struct file *);
 extern int mnt_want_write_file_path(struct file *);
